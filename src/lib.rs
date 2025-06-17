@@ -1807,6 +1807,16 @@ mod tests {
 
     #[pollster::test]
     async fn test_kv_operations() {
+        // Tested:
+        // - set
+        // - get
+        // - rem
+        // - pop
+        // - incr
+        // - decr
+        // - expire
+        // - exists
+
         let store: TurboStore<i32> = TurboStore::with_capacity(2);
 
         let value_1 = TestValue {
@@ -2016,6 +2026,15 @@ mod tests {
 
     #[pollster::test]
     async fn test_set_operations() {
+        // Tested:
+        // - sadd
+        // - srem
+        // - scontains
+        // - slen
+        // - sttl
+        // - sclear
+        // - sall
+
         let store: TurboStore<i32> = TurboStore::with_capacity(4);
 
         // Double 1 and 3 is added to test deduplication, no 4 to test unexistent keys.
