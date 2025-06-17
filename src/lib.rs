@@ -9,7 +9,8 @@
 //!
 //! # Installation
 //!
-//! To install it, just run `cargo add turbostore`. The crate has no features and is async-only.
+//! To install it, just run `cargo add turbostore bitcode`. The crate has no features and is
+//! async-only. You need to install bitcode because of the [`Encode`] and [`Decode`] derive macros.
 //!
 //! A sync API may be added in the future since the underlying APIs used by this crate provide
 //! both sync and async APIs in their majority.
