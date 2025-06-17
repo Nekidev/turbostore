@@ -2018,7 +2018,7 @@ mod tests {
     async fn test_set_operations() {
         let store: TurboStore<i32> = TurboStore::with_capacity(4);
 
-        // Double 1 is added to test deduplication.
+        // Double 1 and 3 is added to test deduplication, no 4 to test unexistent keys.
         store.sadd(1, 1, Duration::minutes(1), 5).await;
         store.sadd(1, 1, Duration::minutes(1), 5).await;
         store.sadd(1, 2, Duration::minutes(1), 5).await;
