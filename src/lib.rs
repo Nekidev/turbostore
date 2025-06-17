@@ -1,4 +1,4 @@
-//! A crate for fast concurrent storage, in-process and redis-like.
+//! A concurrent, in-memory, in-process, Redis-like storage for Rust.
 //!
 //! Any [bitcode]-encodable and [bitcode]-decodable type can be stored using this store, without
 //! being locked to a single type.
