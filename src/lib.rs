@@ -1781,7 +1781,7 @@ where
             return;
         }
 
-        let idx = (deque.len() - len).max(0);
+        let idx = (deque.len().saturating_sub(len)).max(0);
         deque.drain(..idx);
     }
 }
