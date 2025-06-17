@@ -2,6 +2,19 @@
 name = "turbostore"
 version = "0.1.0"
 edition = "2024"
+readme = "README.md"
+description = "A concurrent, in-memory, in-process, redis-like storage for Rust."
+license-file = "LICENSE"
+repository = "https://github.com/Nekidev/turbostore"
+authors = ["Rafael Bradley"]
+keywords = [
+    "turbostore",
+    "redis",
+    "in-memory",
+    "storage",
+    "concurrent",
+    "async",
+]
 
 [dependencies]
 bitcode = "0.6.6"
