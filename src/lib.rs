@@ -2108,4 +2108,394 @@ mod tests {
             "The set didn't have the expected amount of items"
         );
     }
+
+    #[pollster::test]
+    async fn test_deque_operations() {
+        // Tested:
+        // - dappend
+        // - dprepend
+        // - dbpop
+        // - dfpop
+        // - dpop
+        // - dfrem
+        // - dbrem
+        // - drem
+        // - dfpeek
+        // - dbpeek
+        // - dpeek
+        // - dall
+        // - dlen
+        // - dexpire
+        // - dclear
+        // - dmap
+        // - dftruncate
+        // - dbtruncate
+
+        let store: TurboStore<i32> = TurboStore::new();
+
+        store.dappend(1, 1, Duration::minutes(1), 3).await;
+        store.dappend(1, 2, Duration::minutes(1), 3).await;
+        store.dappend(1, 3, Duration::minutes(1), 3).await;
+
+        assert_eq!(
+            store.dlen(&1).await,
+            3,
+            "The deque's length was not of the expected size"
+        );
+
+        let nums: Vec<i32> = store
+            .dall(&1)
+            .await
+            .into_iter()
+            .map(|i| i.clone().unwrap())
+            .collect();
+
+        assert_eq!(nums, [1, 2, 3], "The deque's items are not 1, 2, and 3");
+
+        assert_eq!(
+            store.dbpop::<i32>(&1).await.unwrap().as_ref().unwrap(),
+            &3,
+            "The bpopped item was not 3"
+        );
+        assert_eq!(
+            store.dbpop::<i32>(&1).await.unwrap().as_ref().unwrap(),
+            &2,
+            "The bpopped item was not 2"
+        );
+        assert_eq!(
+            store.dbpop::<i32>(&1).await.unwrap().as_ref().unwrap(),
+            &1,
+            "The bpopped item was not 1"
+        );
+        assert!(
+            store.dbpop::<i32>(&1).await.is_none(),
+            "The bpopped item was not None"
+        );
+
+        store.dprepend(1, 1, Duration::minutes(1), 3).await;
+        store.dprepend(1, 2, Duration::minutes(1), 3).await;
+        store.dprepend(1, 3, Duration::minutes(1), 3).await;
+
+        assert_eq!(
+            store.dlen(&1).await,
+            3,
+            "The deque's length was not of the expected size"
+        );
+
+        let nums: Vec<i32> = store
+            .dall(&1)
+            .await
+            .into_iter()
+            .map(|i| i.clone().unwrap())
+            .collect();
+
+        assert_eq!(nums, [3, 2, 1], "The deque's items are not 3, 2, and 1");
+
+        assert_eq!(
+            store.dfpop::<i32>(&1).await.unwrap().as_ref().unwrap(),
+            &3,
+            "The fpopped item was not 3"
+        );
+        assert_eq!(
+            store.dfpop::<i32>(&1).await.unwrap().as_ref().unwrap(),
+            &2,
+            "The fpopped item was not 2"
+        );
+        assert_eq!(
+            store.dfpop::<i32>(&1).await.unwrap().as_ref().unwrap(),
+            &1,
+            "The fpopped item was not 1"
+        );
+        assert!(
+            store.dfpop::<i32>(&1).await.is_none(),
+            "The fpopped item was not None"
+        );
+
+        assert_eq!(
+            store.dlen(&1).await,
+            0,
+            "The deque was not empty even after fully cleaning it up"
+        );
+
+        store.dappend(1, 1, Duration::minutes(1), 3).await;
+        store.dappend(1, 2, Duration::minutes(1), 3).await;
+        store.dappend(1, 3, Duration::minutes(1), 3).await;
+
+        assert_eq!(
+            store.dpop::<i32>(&1, 1).await.unwrap().as_ref().unwrap(),
+            &2,
+            "The dpopped item was not 2"
+        );
+        assert_eq!(
+            store.dlen(&1).await,
+            2,
+            "The deque's length was not what was expected"
+        );
+
+        store.dclear(&1).await;
+
+        assert_eq!(
+            store.dlen(&1).await,
+            0,
+            "The deque was not empty even after clearing it up"
+        );
+
+        store.dappend(1, 1, Duration::minutes(1), 3).await;
+        store.dappend(1, 2, Duration::minutes(1), 3).await;
+        store.dappend(1, 3, Duration::minutes(1), 3).await;
+
+        store.dfrem(&1).await;
+
+        assert_eq!(
+            store.dfpeek::<i32>(&1).await.unwrap().as_ref().unwrap(),
+            &2,
+            "The fpeeked item was not 2"
+        );
+        assert_eq!(
+            store.dlen(&1).await,
+            2,
+            "The deque's length was not what was expected after removing an item with frem"
+        );
+
+        store.dfrem(&1).await;
+
+        assert_eq!(
+            store.dfpeek::<i32>(&1).await.unwrap().as_ref().unwrap(),
+            &3,
+            "The fpeeked item was not 2"
+        );
+        assert_eq!(
+            store.dlen(&1).await,
+            1,
+            "The deque's length was not what was expected after removing an item with frem"
+        );
+
+        store.dfrem(&1).await;
+
+        assert!(
+            store.dfpeek::<i32>(&1).await.is_none(),
+            "The fpeeked item was not 2"
+        );
+        assert_eq!(
+            store.dlen(&1).await,
+            0,
+            "The deque's length was not what was expected after removing an item with frem"
+        );
+
+        // Remove on an empty deque, this should cause nothing.
+        store.dfrem(&1).await;
+
+        for i in 1..=3 {
+            store.dappend(1, i, Duration::minutes(1), 5).await;
+        }
+
+        store.dbrem(&1).await;
+
+        assert_eq!(
+            store.dbpeek::<i32>(&1).await.unwrap().as_ref().unwrap(),
+            &2,
+            "The bpeeked item was not 2"
+        );
+        assert_eq!(
+            store.dlen(&1).await,
+            2,
+            "The deque's length was not what was expected after removing an item with brem"
+        );
+
+        store.dbrem(&1).await;
+
+        assert_eq!(
+            store.dbpeek::<i32>(&1).await.unwrap().as_ref().unwrap(),
+            &1,
+            "The bpeeked item was not 1"
+        );
+        assert_eq!(
+            store.dlen(&1).await,
+            1,
+            "The deque's length was not what was expected after removing an item with brem"
+        );
+
+        store.dbrem(&1).await;
+
+        assert!(
+            store.dbpeek::<i32>(&1).await.is_none(),
+            "The bpeeked item was not 2"
+        );
+        assert_eq!(
+            store.dlen(&1).await,
+            0,
+            "The deque's length was not what was expected after removing an item with brem"
+        );
+
+        for i in 1..=5 {
+            store.dappend(1, i, Duration::minutes(1), 5).await;
+        }
+
+        store.drem(&1, 2).await;
+
+        let nums: Vec<i32> = store
+            .dall(&1)
+            .await
+            .into_iter()
+            .map(|i| i.clone().unwrap())
+            .collect();
+
+        assert_eq!(
+            nums,
+            [1, 2, 4, 5],
+            "The deque's items are not 1, 2, 4, and 5"
+        );
+
+        store.drem(&1, 2).await;
+
+        let nums: Vec<i32> = store
+            .dall(&1)
+            .await
+            .into_iter()
+            .map(|i| i.clone().unwrap())
+            .collect();
+
+        assert_eq!(nums, [1, 2, 5], "The deque's items are not 1, 2, and 5");
+        assert_eq!(
+            store.dpeek::<i32>(&1, 0).await.unwrap().as_ref().unwrap(),
+            &1,
+            "dpeek did not return 1"
+        );
+        assert_eq!(
+            store.dpeek::<i32>(&1, 1).await.unwrap().as_ref().unwrap(),
+            &2,
+            "dpeek did not return 2"
+        );
+        assert_eq!(
+            store.dpeek::<i32>(&1, 2).await.unwrap().as_ref().unwrap(),
+            &5,
+            "dpeek did not return 5"
+        );
+        assert!(
+            store.dpeek::<i32>(&1, 3).await.is_none(),
+            "dpeek did not return None on an index out of bounds"
+        );
+
+        store.dappend(1, 1, Duration::minutes(1), 1).await;
+
+        let item_ttl = store.dfpeek::<i32>(&1).await.unwrap().expires_at;
+
+        let now = Utc::now();
+        assert!(
+            item_ttl > now + Duration::seconds(59) && item_ttl <= now + Duration::minutes(1),
+            "The expiry time for item was not between 59 seconds and a minute in the future"
+        );
+
+        store.dexpire(&1, 0, Duration::seconds(30)).await;
+
+        let item_ttl = store.dfpeek::<i32>(&1).await.unwrap().expires_at;
+
+        let now = Utc::now();
+        assert!(
+            item_ttl > now + Duration::seconds(29) && item_ttl <= now + Duration::seconds(30),
+            "The expiry time for item was not between 29 and 30 seconds in the future"
+        );
+
+        store.dclear(&1).await;
+
+        // Expire a non-existent item.
+        store.dexpire(&1, 0, Duration::seconds(30)).await;
+
+        for i in 1..=20 {
+            store.dappend(1, i, Duration::minutes(1), 20).await;
+        }
+
+        assert_eq!(
+            store.dlen(&1).await,
+            20,
+            "The deque's length was not what was expected after adding 20 items"
+        );
+
+        store.dftruncate(&1, 15).await;
+
+        assert_eq!(
+            store.dlen(&1).await,
+            15,
+            "The deque's length was not what was expected after ftruncating it"
+        );
+
+        let nums: Vec<i32> = store
+            .dall(&1)
+            .await
+            .into_iter()
+            .map(|i| i.clone().unwrap())
+            .collect();
+
+        assert_eq!(
+            nums,
+            (1..=15).collect::<Vec<_>>(),
+            "The deque's items are not 1..=15 after ftruncating it"
+        );
+
+        store.dbtruncate(&1, 10).await;
+
+        assert_eq!(
+            store.dlen(&1).await,
+            10,
+            "The deque's length was not what was expected after btruncating it"
+        );
+
+        let nums: Vec<i32> = store
+            .dall(&1)
+            .await
+            .into_iter()
+            .map(|i| i.clone().unwrap())
+            .collect();
+
+        assert_eq!(
+            nums,
+            (6..=15).collect::<Vec<_>>(),
+            "The deque's items are not 5..=15 after btruncating it"
+        );
+
+        store.dftruncate(&1, 100).await;
+        store.dbtruncate(&1, 100).await;
+
+        assert_eq!(
+            store.dlen(&1).await,
+            10,
+            "The deque's length was not 10 after btruncating and ftruncating to sizes bigger than it"
+        );
+
+        store.dclear(&1).await;
+
+        for i in 1..=20 {
+            store.dappend(1, i, Duration::minutes(1), 20).await;
+        }
+
+        store
+            .dmap::<i32>(&1, |v| {
+                let new = v.as_ref().unwrap() + 100;
+
+                Some(Value {
+                    value: Ok(new),
+                    expires_at: v.expires_at,
+                })
+            })
+            .await;
+
+        assert_eq!(
+            store.dlen(&1).await,
+            20,
+            "The deque's length was not what was expected after mapping it"
+        );
+
+        let nums: Vec<i32> = store
+            .dall(&1)
+            .await
+            .into_iter()
+            .map(|i| i.clone().unwrap())
+            .collect();
+
+        assert_eq!(
+            nums,
+            (101..=120).collect::<Vec<_>>(),
+            "The deque's items are not 101..=120 after mapping it"
+        );
+    }
 }
