@@ -115,7 +115,7 @@
 //! ```
 //!
 //! Turbostore is runtime-agnostic, so this can also be implemented using async-std.
-//! 
+//!
 //! Not calling [`TurboStore::evict`] periodically will result in expired data staying in memory
 //! until it's next attempted to be accessed. When the data is next attempted to be accessed after
 //! being expired, TurboStore will automatically clean that value up.
@@ -286,8 +286,7 @@ use std::{
     ops::{Deref, Neg},
 };
 
-use bitcode::DecodeOwned;
-pub use bitcode::{Decode, Encode};
+pub use bitcode::{Decode, DecodeOwned, Encode};
 pub use chrono::{DateTime, Duration, Utc};
 use scc::HashMap;
 
