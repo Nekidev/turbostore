@@ -2,6 +2,9 @@
 //! taken from the [`num-traits` crate]. The crate was not added as a dependency since the code
 //! TurboStore depends on is a tiny portion of the `num-traits` crate.
 //! 
+//! `num-trait` is indirectly depended on via `chrono`, but since `chrono` may be removed as a
+//! dependency in the future this is kept for stability and less dependency bloat.
+//! 
 //! [`num-traits` crate]: https://docs.rs/num-traits/0.2.19/src/num_traits/ops/saturating.rs.html#5
 
 use std::ops::{Add, Sub};
