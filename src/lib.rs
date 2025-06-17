@@ -332,7 +332,9 @@ pub enum Error {
     Decoding,
 }
 
-/// A fast concurrent storage, in-memory and redis-like.
+/// A concurrent, in-memory, in-process, Redis-like storage for Rust.
+///
+/// Check the [`crate`]'s documentation to learn how to use it.
 pub struct TurboStore<K: Hash + Eq> {
     pairs: HashMap<K, Value<Vec<u8>>>,
     maps: HashMap<K, HashMap<K, Value<Vec<u8>>>>,
@@ -802,6 +804,9 @@ where
 
             return;
         }
+
+        // Drop before removing, as keeping references while updating causes a deadlock.
+        drop(item);
 
         let expires_at = now + ttl;
 
@@ -2006,6 +2011,82 @@ mod tests {
                 .expect("The value could not be decoded into i32 after incrementing by i32::MAX"),
             &i32::MAX,
             "The value of key 1 was not saturated to i32::MAX after incrementing by i32::MAX"
+        );
+    }
+
+    #[pollster::test]
+    async fn test_set_operations() {
+        let store: TurboStore<i32> = TurboStore::with_capacity(4);
+
+        // Double 1 is added to test deduplication.
+        store.sadd(1, 1, Duration::minutes(1), 5).await;
+        store.sadd(1, 1, Duration::minutes(1), 5).await;
+        store.sadd(1, 2, Duration::minutes(1), 5).await;
+        store.sadd(1, 3, Duration::minutes(1), 5).await;
+        store.sadd(1, 3, Duration::minutes(1), 5).await;
+        store.sadd(1, 5, Duration::minutes(1), 5).await;
+
+        assert!(store.scontains(&1, &1).await, "1 was not in the set");
+        assert!(store.scontains(&1, &2).await, "2 was not in the set");
+        assert!(store.scontains(&1, &3).await, "3 was not in the set");
+        assert!(!store.scontains(&1, &4).await, "4 was in the set");
+        assert!(store.scontains(&1, &5).await, "5 was not in the set");
+        assert_eq!(store.slen(&1).await, 4, "The set's length was not 4");
+
+        store.srem(&1, &1).await;
+
+        assert!(!store.scontains(&1, &1).await, "1 was in the set");
+        assert_eq!(store.slen(&1).await, 3, "The set's length was not 3");
+
+        // Run for a second time to test for any weird deadlocks.
+        store.srem(&1, &1).await;
+
+        store.sclear(&1).await;
+        assert_eq!(store.slen(&1).await, 0, "The set's length was not 0");
+
+        store.sadd(1, 1, Duration::minutes(1), 2).await;
+        store.sadd(1, 2, Duration::minutes(1), 2).await;
+
+        let item_ttl = store
+            .sttl(&1, &1)
+            .await
+            .expect("There was no TTL for item 1 in set");
+
+        let now = Utc::now();
+        assert!(
+            item_ttl > now + Duration::seconds(59) && item_ttl <= now + Duration::minutes(1),
+            "The expiry time for item 1 was not between 59 seconds and a minute in the future"
+        );
+
+        store.sexpire(&1, &1, Duration::seconds(30)).await;
+
+        let item_ttl = store
+            .sttl(&1, &1)
+            .await
+            .expect("There was no TTL for item 1 in set after updating its expiry time");
+
+        let now = Utc::now();
+        assert!(
+            item_ttl > now + Duration::seconds(29) && item_ttl <= now + Duration::seconds(30),
+            "The expiry time for item 1 was not between 29 and 30 seconds in the future"
+        );
+
+        let items = store.sall::<i32>(&1).await;
+
+        let nums: Vec<_> = items.iter().map(|i| i.as_ref().unwrap()).collect();
+
+        assert!(
+            nums.iter().all(|i| [&1, &2].contains(i)),
+            "Not all items were either 1 or 2"
+        );
+        assert!(
+            [&1, &2].iter().all(|i| nums.contains(i)),
+            "Not both 1 and 2 were in the set"
+        );
+        assert_eq!(
+            nums.len(),
+            2,
+            "The set didn't have the expected amount of items"
         );
     }
 }
