@@ -1,9 +1,9 @@
 [package]
 name = "turbostore"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 readme = "README.md"
-description = "A concurrent, in-memory, in-process, redis-like storage for Rust."
+description = "A concurrent, in-memory, in-process, Redis-like storage for Rust."
 license = "MIT"
 repository = "https://github.com/Nekidev/turbostore"
 authors = ["Rafael Bradley"]
