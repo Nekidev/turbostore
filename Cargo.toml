@@ -1,6 +1,6 @@
 [package]
 name = "turbostore"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 readme = "README.md"
 description = "A concurrent, in-memory, in-process, Redis-like storage for Rust."
