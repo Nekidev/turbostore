@@ -2499,4 +2499,168 @@ mod tests {
             "The deque's items are not 101..=120 after mapping it"
         );
     }
+
+    #[pollster::test]
+    async fn test_map_operations() {
+        // Tested:
+        // - hset
+        // - hget
+        // - hpop
+        // - hrem
+        // - hexists
+        // - hexpire
+        // - hlen
+        // - hclear
+
+        let store: TurboStore<i32> = TurboStore::new();
+
+        for i in 1..=3 {
+            for j in 1..=5 {
+                store
+                    .hset(i, j * i, j * i + 5, Duration::minutes(1), 5)
+                    .await;
+
+                assert_eq!(
+                    store.hlen(&i).await,
+                    j as usize,
+                    "Map {i}'s length did not match the amount of items inserted"
+                );
+            }
+        }
+
+        for i in 1..=3 {
+            for j in 1..=5 {
+                let value = store.hget::<i32>(&i, &(j * i)).await.unwrap_or_else(|| {
+                    panic!(
+                        "There was no value in map {i} for key {} when getting",
+                        j * i
+                    )
+                });
+
+                assert_eq!(
+                    &(j * i + 5),
+                    value.as_ref().unwrap_or_else(|_| {
+                        panic!(
+                            "Could not decode value in map {i} for key {} when getting",
+                            j * i
+                        )
+                    }),
+                    "The value set was not the value retrieved for key {} in map {i} when getting",
+                    i * j
+                );
+            }
+        }
+
+        for i in 1..=3 {
+            for j in 1..=5 {
+                let value = store.hpop::<i32>(&i, &(j * i)).await.unwrap_or_else(|| {
+                    panic!(
+                        "There was no value in map {i} for key {} when popping",
+                        j * i
+                    )
+                });
+
+                assert_eq!(
+                    &(j * i + 5),
+                    value.as_ref().unwrap_or_else(|_| {
+                        panic!(
+                            "Could not decode value in map {i} for key {} when popping",
+                            j * i
+                        )
+                    }),
+                    "The value set was not the value retrieved for key {} in map {i} when popping",
+                    i * j
+                );
+            }
+        }
+
+        for i in 1..=3 {
+            for j in 1..=5 {
+                let value = store.hget::<i32>(&i, &(j * i)).await;
+
+                assert!(
+                    value.is_none(),
+                    "The value was not None after popped for key {} in map {i}",
+                    j * i
+                );
+            }
+        }
+
+        for i in 1..=3 {
+            for j in 1..=5 {
+                store
+                    .hset(i, j * i, j * i + 5, Duration::minutes(1), 5)
+                    .await;
+
+                assert_eq!(
+                    store.hlen(&i).await,
+                    j as usize,
+                    "Map {i}'s length did not match the amount of items inserted"
+                );
+            }
+        }
+
+        for i in 1..=3 {
+            for j in 1..=5 {
+                store.hrem(&i, &(j * i)).await;
+                let value = store.hget::<i32>(&i, &(j * i)).await;
+
+                assert!(
+                    value.is_none(),
+                    "The value was not None after removed for key {} in map {i}",
+                    j * i
+                );
+            }
+        }
+
+        for i in 1..=3 {
+            for j in 1..=5 {
+                assert!(
+                    !store.hexists(&i, &(i * j)).await,
+                    "The key {} existed in map {i} before inserting it",
+                    i * j
+                );
+
+                store
+                    .hset(i, j * i, j * i + 5, Duration::minutes(1), 5)
+                    .await;
+
+                assert!(
+                    store.hexists(&i, &(i * j)).await,
+                    "The key {} did not exist in map {i} after inserting it",
+                    i * j
+                );
+
+                let value_ttl = store
+                    .hget::<i32>(&i, &(i * j))
+                    .await
+                    .unwrap_or_else(|| panic!("Item {} in map {i} did not return a value", i * j))
+                    .expires_at;
+
+                let now = Utc::now();
+                assert!(
+                    value_ttl > now + Duration::seconds(59)
+                        && value_ttl <= now + Duration::minutes(1),
+                    "The expiry time for item {} in map {i} was not between 59 seconds and a minute in the future",
+                    j * i
+                );
+            }
+        }
+
+        for i in 1..=3 {
+            assert_eq!(
+                store.hlen(&i).await,
+                5,
+                "The map {i} did not have the expected amount of items before clearing it"
+            );
+
+            store.hclear(&i).await;
+
+            assert_eq!(
+                store.hlen(&i).await,
+                0,
+                "The map {i} did not have the expected amount of items after clearing it"
+            );
+        }
+    }
 }
