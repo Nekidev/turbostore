@@ -1010,11 +1010,12 @@ where
         if map.is_empty() {
             // No dropping here since `_key` and `value` aren't locks (they're removed from the
             // map).
+            drop(map);
             self.maps.remove_async(hkey).await;
+        } else {
+            // Dropping early to release the lock.
+            drop(map);
         }
-
-        // Dropping the lock early to allow other threads to start using the value ASAP.
-        drop(map);
 
         if value.is_expired(&Utc::now()) {
             return None;
