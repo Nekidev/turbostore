@@ -296,6 +296,7 @@ use crate::math::{SaturatingAdd, SaturatingSub};
 mod math;
 
 /// A TurboStore value.
+#[derive(Clone)]
 pub struct Value<T> {
     /// The date and time this value expires at.
     pub expires_at: DateTime<Utc>,
@@ -538,11 +539,9 @@ where
     where
         V: DecodeOwned,
     {
-        let value = self.pairs.get_async(key).await?;
+        let value = self.pairs.read_async(key, |_, v| v.clone()).await?;
 
         if value.is_expired(&Utc::now()) {
-            // Removing with a reference alive causes a deadlock.
-            drop(value);
             self.pairs.remove_async(key).await;
             return None;
         }
@@ -601,10 +600,14 @@ where
     pub async fn expire(&self, key: K, ttl: Duration) -> bool {
         let expires_at = Utc::now() + ttl;
 
-        let maybe_new_value = self.pairs.get_async(&key).await.map(|value| Value {
-            value: value.value.clone(),
-            expires_at,
-        });
+        let maybe_new_value = self
+            .pairs
+            .read_async(&key, |_, v| v.clone())
+            .await
+            .map(|value| Value {
+                value: value.value,
+                expires_at,
+            });
 
         match maybe_new_value {
             None => false,
@@ -623,7 +626,7 @@ where
     /// Returns:
     /// [`bool`] - Whether a KV pair for that key exists.
     pub async fn exists(&self, key: &K) -> bool {
-        let expired = match self.pairs.get_async(key).await {
+        let expired = match self.pairs.read_async(key, |_, v| v.clone()).await {
             None => return false,
             Some(inner) => inner.is_expired(&Utc::now()),
         };
@@ -746,7 +749,7 @@ where
 
         let encoded = bitcode::encode(item);
 
-        let item = set.get_async(&encoded).await?;
+        let item = set.read_async(&encoded, |_, v| v.clone()).await?;
 
         if item.is_expired(&Utc::now()) {
             set.remove_async(&encoded).await;
@@ -754,7 +757,6 @@ where
             if set.is_empty() {
                 // Drop everything before removing, as keeping references while removing causes a
                 // deadlock.
-                drop(item);
                 drop(set);
                 self.sets.remove_async(skey).await;
             }
@@ -784,7 +786,7 @@ where
 
         let encoded = bitcode::encode(item);
 
-        let item = match set.get_async(&encoded).await {
+        let mut item = match set.get_async(&encoded).await {
             None => return,
             Some(v) => v,
         };
@@ -805,19 +807,12 @@ where
             return;
         }
 
-        // Drop before removing, as keeping references while updating causes a deadlock.
-        drop(item);
-
         let expires_at = now + ttl;
 
-        set.upsert_async(
-            encoded,
-            Value {
-                value: (),
-                expires_at,
-            },
-        )
-        .await;
+        *item = Value {
+            value: (),
+            expires_at,
+        };
     }
 
     /// Checks whether an item is in a set.
@@ -839,7 +834,7 @@ where
 
         let encoded = bitcode::encode(item);
 
-        let value = match set.get_async(&encoded).await {
+        let value = match set.read_async(&encoded, |_, v| v.clone()).await {
             None => return false,
             Some(v) => v,
         };
@@ -850,7 +845,6 @@ where
             if set.is_empty() {
                 // Drop everything before removing, as keeping references while removing causes a
                 // deadlock.
-                drop(value);
                 drop(set);
                 self.sets.remove_async(skey).await;
             }
@@ -953,7 +947,7 @@ where
     {
         let map = self.maps.get_async(hkey).await?;
 
-        let value = map.get_async(key).await?;
+        let value = map.read_async(key, |_, v| v.clone()).await?;
 
         if value.is_expired(&Utc::now()) {
             map.remove_async(key).await;
@@ -1040,7 +1034,7 @@ where
             Some(v) => v,
         };
 
-        let value = match map.get_async(key).await {
+        let value = match map.read_async(key, |_, v| v.clone()).await {
             None => return false,
             Some(v) => v,
         };
@@ -1076,7 +1070,7 @@ where
             Some(v) => v,
         };
 
-        let value = match map.get_async(&key).await {
+        let mut value = match map.get_async(&key).await {
             None => return,
             Some(v) => v,
         };
@@ -1097,16 +1091,7 @@ where
             return;
         }
 
-        map.upsert_async(
-            key,
-            Value {
-                // Cannot use std::mem::take because that'd update the original value in the map
-                // too, and we don't want that.
-                value: value.value.clone(),
-                expires_at: now + ttl,
-            },
-        )
-        .await;
+        value.expires_at = now + ttl;
     }
 
     /// Returns the amount of keys in a map.
@@ -2145,10 +2130,10 @@ mod tests {
         );
 
         let nums: Vec<i32> = store
-            .dall(&1)
+            .dall::<i32>(&1)
             .await
             .into_iter()
-            .map(|i| i.clone().unwrap())
+            .map(|i| i.value.unwrap())
             .collect();
 
         assert_eq!(nums, [1, 2, 3], "The deque's items are not 1, 2, and 3");
@@ -2187,7 +2172,7 @@ mod tests {
             .dall(&1)
             .await
             .into_iter()
-            .map(|i| i.clone().unwrap())
+            .map(|i| i.value.unwrap())
             .collect();
 
         assert_eq!(nums, [3, 2, 1], "The deque's items are not 3, 2, and 1");
@@ -2338,7 +2323,7 @@ mod tests {
             .dall(&1)
             .await
             .into_iter()
-            .map(|i| i.clone().unwrap())
+            .map(|i| i.value.unwrap())
             .collect();
 
         assert_eq!(
@@ -2353,7 +2338,7 @@ mod tests {
             .dall(&1)
             .await
             .into_iter()
-            .map(|i| i.clone().unwrap())
+            .map(|i| i.value.unwrap())
             .collect();
 
         assert_eq!(nums, [1, 2, 5], "The deque's items are not 1, 2, and 5");
@@ -2424,7 +2409,7 @@ mod tests {
             .dall(&1)
             .await
             .into_iter()
-            .map(|i| i.clone().unwrap())
+            .map(|i| i.value.unwrap())
             .collect();
 
         assert_eq!(
@@ -2445,7 +2430,7 @@ mod tests {
             .dall(&1)
             .await
             .into_iter()
-            .map(|i| i.clone().unwrap())
+            .map(|i| i.value.unwrap())
             .collect();
 
         assert_eq!(
@@ -2490,7 +2475,7 @@ mod tests {
             .dall(&1)
             .await
             .into_iter()
-            .map(|i| i.clone().unwrap())
+            .map(|i| i.value.unwrap())
             .collect();
 
         assert_eq!(
