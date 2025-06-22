@@ -120,6 +120,10 @@
 //! Not calling [`TurboStore::evict`] periodically will result in expired data staying in memory
 //! until it's next attempted to be accessed. When the data is next attempted to be accessed after
 //! being expired, TurboStore will automatically clean that value up.
+//! 
+//! *Note: Calling [`TurboStore::evict`] is quite inefficient at the moment, as it scans through
+//! all keys and items, expired or not. This'll be worked on in a future version to emulate Redis's
+//! garbage collection.*
 //!
 //! ## Data Structures
 //!
