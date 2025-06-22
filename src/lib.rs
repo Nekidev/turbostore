@@ -251,25 +251,15 @@
 //! ).await;
 //!
 //! // The first `Option` returns whether the key existed.
-//! // The `Value` is the internal wrapper over values which stores metadata (e.g. expiry time).
-//! // The inner `Result` is the result of decoding the value. Since types are dynamic-ish, setting
-//! //   the wrong value will fail.
-//! let stored_user: Value<Result<User, _>> = store.get::<User>(&Key::User(1)).await.unwrap();
+//! // The `Result` is the result of decoding the value. Since types are dynamic-ish, setting the
+//! //   wrong value will fail.
+//! // The `Value` is TurboStore's internal wrapper over values, which stores metadata (e.g. expiry
+//! //   time).
+//! let stored_user: Value<User> = store.get::<User>(&Key::User(1)).await.unwrap().unwrap();
 //!
-//! assert_eq!(*stored_user.as_ref().unwrap(), user);
+//! assert_eq!(*stored_user, user);
 //! # }.block_on();
 //! ```
-//!
-//! # FAQ
-//!
-//! 1. Q: **Why is the [`Option`] and [`Result`] nesting so uncomfortable?**
-//!
-//!    A: The way they're nested exposes the most amount of metadata when the value fails to be
-//!    decoded. E.g. with [`Result<Value<V>, Error>`], if the value fails to be decoded the value's
-//!    metadata gets hidden because of [`Err`]. Using [`Value<Result<V, Error>>`] allows you to
-//!    access the value's metadata even if it fails to decode.
-//!
-//! [bitcode]: https://docs.rs/bitcode
 //!
 //! # Roadmap
 //!
@@ -280,6 +270,8 @@
 //! Contributions are welcome, whether it's feedback, bug reports, or pull requests. Check out
 //! [our GitHub repository](https://github.com/Nekidev/turbostore) for the source code and issue
 //! tracker.
+//! 
+//! [bitcode]: https://docs.rs/bitcode
 
 use std::{
     collections::VecDeque,
@@ -296,7 +288,7 @@ use crate::math::{SaturatingAdd, SaturatingSub};
 mod math;
 
 /// A TurboStore value.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Value<T> {
     /// The date and time this value expires at.
     pub expires_at: DateTime<Utc>,
@@ -532,10 +524,10 @@ where
     /// * `key` - The key whose value to retrieve.
     ///
     /// Returns:
-    /// [`Option<Value<Result<V, Error>>>`] - `Some(Ok(V))` if there is a non-expired value,
-    /// `None` if the value is non-existent or expired, or `Some(Value(Err(Error::Decoding)))` if
+    /// [`Option<Result<Value<V>, Error>>`] - `Some(Ok(V))` if there is a non-expired value,
+    /// `None` if the value is non-existent or expired, or `Some(Err(Error::Decoding))` if
     /// the key exists and is not expired but the value could not be decoded to the specified type.
-    pub async fn get<V>(&self, key: &K) -> Option<Value<Result<V, Error>>>
+    pub async fn get<V>(&self, key: &K) -> Option<Result<Value<V>, Error>>
     where
         V: DecodeOwned,
     {
@@ -546,10 +538,14 @@ where
             return None;
         }
 
-        Some(Value {
-            value: bitcode::decode(&value).map_err(|_| Error::Decoding),
-            expires_at: value.expires_at,
-        })
+        Some(
+            bitcode::decode(&value)
+                .map(|decoded| Value {
+                    value: decoded,
+                    expires_at: value.expires_at,
+                })
+                .map_err(|_| Error::Decoding),
+        )
     }
 
     /// Removes a KV pair by key.
@@ -569,10 +565,10 @@ where
     /// * `key` - The key of the KV pair to pop.
     ///
     /// Returns:
-    /// [`Option<Value<Result<V, Error>>>`] - `Some(Ok(V))` if there is a non-expired value,
-    /// `None` if the value is non-existent or expired, or `Some(Value(Err(Error::Decoding)))` if
+    /// [`Option<Result<Value<V>, Error>>`] - `Some(Ok(V))` if there is a non-expired value,
+    /// `None` if the value is non-existent or expired, or `Some(Err(Error::Decoding))` if
     /// the key exists and is not expired but the value could not be decoded to the specified type.
-    pub async fn pop<V>(&self, key: &K) -> Option<Value<Result<V, Error>>>
+    pub async fn pop<V>(&self, key: &K) -> Option<Result<Value<V>, Error>>
     where
         V: DecodeOwned,
     {
@@ -582,10 +578,14 @@ where
             return None;
         }
 
-        Some(Value {
-            value: bitcode::decode(&value).map_err(|_| Error::Decoding),
-            expires_at: value.expires_at,
-        })
+        Some(
+            bitcode::decode(&value)
+                .map(|decoded| Value {
+                    value: decoded,
+                    expires_at: value.expires_at,
+                })
+                .map_err(|_| Error::Decoding),
+        )
     }
 
     /// Update the expiration datetime of a KV pair.
@@ -861,9 +861,9 @@ where
     /// * `skey` - The set's key.
     ///
     /// Returns:
-    /// [`Vec<Value<Result<V, Error>>>`] - An array with all the items in the set, each of them
+    /// [`Vec<Result<Value<V>, Error>>`] - An array with all the items in the set, each of them
     /// containing the result of their decoding individually.
-    pub async fn sall<V>(&self, skey: &K) -> Vec<Value<Result<V, Error>>>
+    pub async fn sall<V>(&self, skey: &K) -> Vec<Result<Value<V>, Error>>
     where
         V: DecodeOwned,
     {
@@ -881,12 +881,14 @@ where
                 return false;
             }
 
-            let decoded = bitcode::decode::<V>(k).map_err(|_| Error::Decoding);
+            let value = bitcode::decode::<V>(k)
+                .map(|inner| Value {
+                    value: inner,
+                    expires_at: v.expires_at,
+                })
+                .map_err(|_| Error::Decoding);
 
-            values.push(Value {
-                value: decoded,
-                expires_at: v.expires_at,
-            });
+            values.push(value);
 
             true
         })
@@ -938,10 +940,10 @@ where
     /// * `key` - The key whose value to get in the map.
     ///
     /// Returns:
-    /// [`Option<Value<Result<V, Error>>>`] - `Some(Ok(V))` if there is a non-expired value,
-    /// `None` if the value is non-existent or expired, or `Some(Value(Err(Error::Decoding)))` if
+    /// [`Option<Result<Value<V>, Error>>`] - `Some(Ok(V))` if there is a non-expired value,
+    /// `None` if the value is non-existent or expired, or `Some(Err(Error::Decoding))` if
     /// the key exists and is not expired but the value could not be decoded to the specified type.
-    pub async fn hget<V>(&self, hkey: &K, key: &K) -> Option<Value<Result<V, Error>>>
+    pub async fn hget<V>(&self, hkey: &K, key: &K) -> Option<Result<Value<V>, Error>>
     where
         V: DecodeOwned,
     {
@@ -963,10 +965,14 @@ where
             return None;
         }
 
-        Some(Value {
-            value: bitcode::decode(&value).map_err(|_| Error::Decoding),
-            expires_at: value.expires_at,
-        })
+        Some(
+            bitcode::decode(&value)
+                .map(|decoded| Value {
+                    value: decoded,
+                    expires_at: value.expires_at,
+                })
+                .map_err(|_| Error::Decoding),
+        )
     }
 
     /// Removes a KV pair from a map.
@@ -990,10 +996,10 @@ where
     /// * `key` - The key of the KV pair to remove.
     ///
     /// Returns:
-    /// [`Option<Value<Result<V, Error>>>`] - `Some(Ok(V))` if there is a non-expired value,
-    /// `None` if the value is non-existent or expired, or `Some(Value(Err(Error::Decoding)))` if
+    /// [`Option<Result<Value<V>, Error>>`] - `Some(Ok(V))` if there is a non-expired value,
+    /// `None` if the value is non-existent or expired, or `Some(Err(Error::Decoding))` if
     /// the key exists and is not expired but the value could not be decoded to the specified type.
-    pub async fn hpop<V>(&self, hkey: &K, key: &K) -> Option<Value<Result<V, Error>>>
+    pub async fn hpop<V>(&self, hkey: &K, key: &K) -> Option<Result<Value<V>, Error>>
     where
         V: DecodeOwned,
     {
@@ -1015,10 +1021,14 @@ where
             return None;
         }
 
-        Some(Value {
-            value: bitcode::decode(&value).map_err(|_| Error::Decoding),
-            expires_at: value.expires_at,
-        })
+        Some(
+            bitcode::decode(&value)
+                .map(|decoded| Value {
+                    value: decoded,
+                    expires_at: value.expires_at,
+                })
+                .map_err(|_| Error::Decoding),
+        )
     }
 
     /// Checks whether a key exists in a map.
@@ -1198,10 +1208,10 @@ where
     /// * `dkey` - The key of the deque.
     ///
     /// Returns:
-    /// [`Option<Value<Result<V, Error>>>`] - `Some(Ok(V))` if there is a non-expired value,
-    /// `None` if the deque is empty, or `Some(Value(Err(Error::Decoding)))` if the key exists and
+    /// [`Option<Result<Value<V>, Error>>`] - `Some(Ok(V))` if there is a non-expired value,
+    /// `None` if the deque is empty, or `Some(Err(Error::Decoding))` if the key exists and
     /// is not expired but the value could not be decoded to the specified type.
-    pub async fn dfpop<V>(&self, dkey: &K) -> Option<Value<Result<V, Error>>>
+    pub async fn dfpop<V>(&self, dkey: &K) -> Option<Result<Value<V>, Error>>
     where
         V: DecodeOwned,
     {
@@ -1231,12 +1241,14 @@ where
             drop(deque);
         }
 
-        let decoded = bitcode::decode::<V>(&value).map_err(|_| Error::Decoding);
-
-        Some(Value {
-            value: decoded,
-            expires_at: value.expires_at,
-        })
+        Some(
+            bitcode::decode(&value)
+                .map(|decoded| Value {
+                    value: decoded,
+                    expires_at: value.expires_at,
+                })
+                .map_err(|_| Error::Decoding),
+        )
     }
 
     /// Removes and returns the last item of the deque.
@@ -1245,10 +1257,10 @@ where
     /// * `dkey` - The key of the deque.
     ///
     /// Returns:
-    /// [`Option<Value<Result<V, Error>>>`] - `Some(Ok(V))` if there is a non-expired value,
-    /// `None` if the deque is empty, or `Some(Value(Err(Error::Decoding)))` if the key exists and
+    /// [`Option<Result<Value<V>, Error>>`] - `Some(Ok(V))` if there is a non-expired value,
+    /// `None` if the deque is empty, or `Some(Err(Error::Decoding))` if the key exists and
     /// is not expired but the value could not be decoded to the specified type.
-    pub async fn dbpop<V>(&self, dkey: &K) -> Option<Value<Result<V, Error>>>
+    pub async fn dbpop<V>(&self, dkey: &K) -> Option<Result<Value<V>, Error>>
     where
         V: DecodeOwned,
     {
@@ -1278,12 +1290,14 @@ where
             drop(deque);
         }
 
-        let decoded = bitcode::decode::<V>(&value).map_err(|_| Error::Decoding);
-
-        Some(Value {
-            value: decoded,
-            expires_at: value.expires_at,
-        })
+        Some(
+            bitcode::decode(&value)
+                .map(|decoded| Value {
+                    value: decoded,
+                    expires_at: value.expires_at,
+                })
+                .map_err(|_| Error::Decoding),
+        )
     }
 
     /// Removes and returns an item of the deque.
@@ -1295,10 +1309,10 @@ where
     /// * `index` - The index of the item to pop in the deque.
     ///
     /// Returns:
-    /// [`Option<Value<Result<V, Error>>>`] - `Some(Ok(V))` if there is a non-expired value,
-    /// `None` if the deque is empty, or `Some(Value(Err(Error::Decoding)))` if the key exists and
+    /// [`Option<Result<Value<V>, Error>>`] - `Some(Ok(V))` if there is a non-expired value,
+    /// `None` if the deque is empty, or `Some(Err(Error::Decoding))` if the key exists and
     /// is not expired but the value could not be decoded to the specified type.
-    pub async fn dpop<V>(&self, dkey: &K, index: usize) -> Option<Value<Result<V, Error>>>
+    pub async fn dpop<V>(&self, dkey: &K, index: usize) -> Option<Result<Value<V>, Error>>
     where
         V: DecodeOwned,
     {
@@ -1320,12 +1334,14 @@ where
             drop(deque);
         }
 
-        let decoded = bitcode::decode::<V>(&value).map_err(|_| Error::Decoding);
-
-        Some(Value {
-            value: decoded,
-            expires_at: value.expires_at,
-        })
+        Some(
+            bitcode::decode(&value)
+                .map(|decoded| Value {
+                    value: decoded,
+                    expires_at: value.expires_at,
+                })
+                .map_err(|_| Error::Decoding),
+        )
     }
 
     /// Removes the first item of the deque.
@@ -1421,10 +1437,10 @@ where
     /// * `dkey` - The key of the deque.
     ///
     /// Returns:
-    /// [`Option<Value<Result<V, Error>>>`] - `Some(Ok(V))` if there is a non-expired value,
-    /// `None` if the deque is empty, or `Some(Value(Err(Error::Decoding)))` if the key exists and
+    /// [`Option<Result<Value<V>, Error>>`] - `Some(Ok(V))` if there is a non-expired value,
+    /// `None` if the deque is empty, or `Some(Err(Error::Decoding))` if the key exists and
     /// is not expired but the value could not be decoded to the specified type.
-    pub async fn dfpeek<V>(&self, dkey: &K) -> Option<Value<Result<V, Error>>>
+    pub async fn dfpeek<V>(&self, dkey: &K) -> Option<Result<Value<V>, Error>>
     where
         V: DecodeOwned,
     {
@@ -1450,12 +1466,14 @@ where
             break Some(value);
         }?;
 
-        let decoded = bitcode::decode::<V>(value).map_err(|_| Error::Decoding);
-
-        Some(Value {
-            value: decoded,
-            expires_at: value.expires_at,
-        })
+        Some(
+            bitcode::decode(value)
+                .map(|decoded| Value {
+                    value: decoded,
+                    expires_at: value.expires_at,
+                })
+                .map_err(|_| Error::Decoding),
+        )
     }
 
     /// Returns the last item of the deque.
@@ -1464,10 +1482,10 @@ where
     /// * `dkey` - The key of the deque.
     ///
     /// Returns:
-    /// [`Option<Value<Result<V, Error>>>`] - `Some(Ok(V))` if there is a non-expired value,
-    /// `None` if the deque is empty, or `Some(Value(Err(Error::Decoding)))` if the key exists and
+    /// [`Option<Result<Value<V>, Error>>`] - `Some(Ok(V))` if there is a non-expired value,
+    /// `None` if the deque is empty, or `Some(Err(Error::Decoding))` if the key exists and
     /// is not expired but the value could not be decoded to the specified type.
-    pub async fn dbpeek<V>(&self, dkey: &K) -> Option<Value<Result<V, Error>>>
+    pub async fn dbpeek<V>(&self, dkey: &K) -> Option<Result<Value<V>, Error>>
     where
         V: DecodeOwned,
     {
@@ -1493,12 +1511,14 @@ where
             break Some(value);
         }?;
 
-        let decoded = bitcode::decode::<V>(value).map_err(|_| Error::Decoding);
-
-        Some(Value {
-            value: decoded,
-            expires_at: value.expires_at,
-        })
+        Some(
+            bitcode::decode(value)
+                .map(|decoded| Value {
+                    value: decoded,
+                    expires_at: value.expires_at,
+                })
+                .map_err(|_| Error::Decoding),
+        )
     }
 
     /// Returns an item of the deque.
@@ -1508,10 +1528,10 @@ where
     /// * `index` - The index of the item in the deque to return.
     ///
     /// Returns:
-    /// [`Option<Value<Result<V, Error>>>`] - `Some(Ok(V))` if there is a non-expired value,
-    /// `None` if the deque is empty, or `Some(Value(Err(Error::Decoding)))` if the key exists and
+    /// [`Option<Result<Value<V>, Error>>`] - `Some(Ok(V))` if there is a non-expired value,
+    /// `None` if the deque is empty, or `Some(Err(Error::Decoding))` if the key exists and
     /// is not expired but the value could not be decoded to the specified type.
-    pub async fn dpeek<V>(&self, dkey: &K, index: usize) -> Option<Value<Result<V, Error>>>
+    pub async fn dpeek<V>(&self, dkey: &K, index: usize) -> Option<Result<Value<V>, Error>>
     where
         V: DecodeOwned,
     {
@@ -1531,12 +1551,14 @@ where
 
         let item = (*deque).get(index)?;
 
-        let decoded = bitcode::decode::<V>(item).map_err(|_| Error::Decoding);
-
-        Some(Value {
-            value: decoded,
-            expires_at: item.expires_at,
-        })
+        Some(
+            bitcode::decode(item)
+                .map(|decoded| Value {
+                    value: decoded,
+                    expires_at: item.expires_at,
+                })
+                .map_err(|_| Error::Decoding),
+        )
     }
 
     /// Returns the amount of items in a deque.
@@ -1682,9 +1704,9 @@ where
     /// * `dkey` - The key of the deque.
     ///
     /// Returns:
-    /// [`VecDeque<Value<Result<V, Error>>>`] - The deque with its values, each with its own inner
+    /// [`VecDeque<Result<Value<V>, Error>>`] - The deque with its values, each with its own inner
     /// decoding result. This will be an empty deque if the deque does not exist.
-    pub async fn dall<V>(&self, dkey: &K) -> VecDeque<Value<Result<V, Error>>>
+    pub async fn dall<V>(&self, dkey: &K) -> VecDeque<Result<Value<V>, Error>>
     where
         V: DecodeOwned,
     {
@@ -1708,12 +1730,12 @@ where
         (*deque)
             .iter()
             .map(|i| {
-                let decoded = bitcode::decode::<V>(i).map_err(|_| Error::Decoding);
-
-                Value {
-                    value: decoded,
-                    expires_at: i.expires_at,
-                }
+                bitcode::decode(i)
+                    .map(|decoded| Value {
+                        value: decoded,
+                        expires_at: i.expires_at,
+                    })
+                    .map_err(|_| Error::Decoding)
             })
             .collect()
     }
@@ -1823,7 +1845,8 @@ mod tests {
         let retrieved_1 = store
             .get::<TestValue>(&1)
             .await
-            .expect("There was no KV pair with key 1");
+            .expect("There was no KV pair with key 1")
+            .expect("The retrieved KV 1 failed to be decoded");
 
         let now = Utc::now();
         // Leave a threshold for the code up to have time to execute.
@@ -1834,10 +1857,7 @@ mod tests {
         );
 
         assert_eq!(
-            retrieved_1
-                .as_ref()
-                .expect("The retrieved KV 1 failed to be decoded"),
-            &value_1,
+            *retrieved_1, value_1,
             "The retrieved value for key 1 was not the same value than the one set previously."
         );
 
@@ -1846,7 +1866,8 @@ mod tests {
         let popped_1 = store
             .pop::<TestValue>(&1)
             .await
-            .expect("There was no value to pop for key 1");
+            .expect("There was no value to pop for key 1")
+            .expect("The popped KV 1 failed to be decoded");
 
         let now = Utc::now();
         // Leave a threshold for the code up to have time to execute.
@@ -1857,10 +1878,7 @@ mod tests {
         );
 
         assert_eq!(
-            popped_1
-                .as_ref()
-                .expect("The popped KV 1 failed to be decoded"),
-            &value_1,
+            *popped_1, value_1,
             "The retrieved value for key 1 was not the same value than the one set previously."
         );
 
@@ -1895,7 +1913,10 @@ mod tests {
         let incr_1 = store
             .get::<i32>(&1)
             .await
-            .expect("There was no value for key 1 after setting to a previously-removed key");
+            .expect("There was no value for key 1 after setting to a previously-removed key")
+            .expect(
+                "The value could not be decoded into i32 after setting to a previously-removed key",
+            );
 
         let now = Utc::now();
         // Leave a threshold for the code up to have time to execute.
@@ -1906,10 +1927,7 @@ mod tests {
         );
 
         assert_eq!(
-            incr_1.as_ref().expect(
-                "The value could not be decoded into i32 after setting to a previously-removed key"
-            ),
-            &1,
+            *incr_1, 1,
             "The value of key 1 was not 1 after setting to a previously-removed key"
         );
 
@@ -1921,13 +1939,11 @@ mod tests {
         let incr_1 = store
             .get::<i32>(&1)
             .await
-            .expect("There was no value for key 1 after incrementing");
+            .expect("There was no value for key 1 after incrementing")
+            .expect("The value could not be decoded into i32 after incrementing");
 
         assert_eq!(
-            incr_1
-                .as_ref()
-                .expect("The value could not be decoded into i32 after incrementing"),
-            &3,
+            *incr_1, 3,
             "The value of key 1 was not properly incremented by INCR"
         );
 
@@ -1945,7 +1961,10 @@ mod tests {
         let incr_1 = store
             .get::<i32>(&1)
             .await
-            .expect("There was no value for key 1 after decrementing after incrementing");
+            .expect("There was no value for key 1 after decrementing after incrementing")
+            .expect(
+                "The value could not be decoded into i32 after decrementing after incrementing",
+            );
 
         let now = Utc::now();
         // Leave a threshold for the code up to have time to execute.
@@ -1956,10 +1975,7 @@ mod tests {
         );
 
         assert_eq!(
-            incr_1.as_ref().expect(
-                "The value could not be decoded into i32 after decrementing after incrementing"
-            ),
-            &2,
+            *incr_1, 2,
             "The value of key 1 was not 1 after decrementing after incrementing"
         );
 
@@ -1976,13 +1992,12 @@ mod tests {
         let decr_1 = store
             .get::<i32>(&1)
             .await
-            .expect("There was no value for key 1 after decrementing after incrementing");
+            .expect("There was no value for key 1 after decrementing after incrementing")
+            .expect("The value could not be decoded into i32 after decrementing by i32::MAX");
 
         assert_eq!(
-            decr_1
-                .as_ref()
-                .expect("The value could not be decoded into i32 after decrementing by i32::MAX"),
-            &i32::MIN,
+            *decr_1,
+            i32::MIN,
             "The value of key 1 was not saturated to i32::MIN after decrementing by i32::MAX"
         );
 
@@ -1999,13 +2014,12 @@ mod tests {
         let incr_1 = store
             .get::<i32>(&1)
             .await
-            .expect("There was no value for key 1 after incrementing after resetting");
+            .expect("There was no value for key 1 after incrementing after resetting")
+            .expect("The value could not be decoded into i32 after incrementing by i32::MAX");
 
         assert_eq!(
-            incr_1
-                .as_ref()
-                .expect("The value could not be decoded into i32 after incrementing by i32::MAX"),
-            &i32::MAX,
+            *incr_1,
+            i32::MAX,
             "The value of key 1 was not saturated to i32::MAX after incrementing by i32::MAX"
         );
     }
@@ -2078,14 +2092,14 @@ mod tests {
 
         let items = store.sall::<i32>(&1).await;
 
-        let nums: Vec<_> = items.iter().map(|i| i.as_ref().unwrap()).collect();
+        let nums: Vec<_> = items.into_iter().map(|i| *i.unwrap()).collect();
 
         assert!(
-            nums.iter().all(|i| [&1, &2].contains(i)),
+            nums.iter().all(|i| [1, 2].contains(i)),
             "Not all items were either 1 or 2"
         );
         assert!(
-            [&1, &2].iter().all(|i| nums.contains(i)),
+            [1, 2].iter().all(|i| nums.contains(i)),
             "Not both 1 and 2 were in the set"
         );
         assert_eq!(
@@ -2133,24 +2147,24 @@ mod tests {
             .dall::<i32>(&1)
             .await
             .into_iter()
-            .map(|i| i.value.unwrap())
+            .map(|i| *i.unwrap())
             .collect();
 
         assert_eq!(nums, [1, 2, 3], "The deque's items are not 1, 2, and 3");
 
         assert_eq!(
-            store.dbpop::<i32>(&1).await.unwrap().as_ref().unwrap(),
-            &3,
+            *store.dbpop::<i32>(&1).await.unwrap().unwrap(),
+            3,
             "The bpopped item was not 3"
         );
         assert_eq!(
-            store.dbpop::<i32>(&1).await.unwrap().as_ref().unwrap(),
-            &2,
+            *store.dbpop::<i32>(&1).await.unwrap().unwrap(),
+            2,
             "The bpopped item was not 2"
         );
         assert_eq!(
-            store.dbpop::<i32>(&1).await.unwrap().as_ref().unwrap(),
-            &1,
+            *store.dbpop::<i32>(&1).await.unwrap().unwrap(),
+            1,
             "The bpopped item was not 1"
         );
         assert!(
@@ -2172,24 +2186,24 @@ mod tests {
             .dall(&1)
             .await
             .into_iter()
-            .map(|i| i.value.unwrap())
+            .map(|i| *i.unwrap())
             .collect();
 
         assert_eq!(nums, [3, 2, 1], "The deque's items are not 3, 2, and 1");
 
         assert_eq!(
-            store.dfpop::<i32>(&1).await.unwrap().as_ref().unwrap(),
-            &3,
+            *store.dfpop::<i32>(&1).await.unwrap().unwrap(),
+            3,
             "The fpopped item was not 3"
         );
         assert_eq!(
-            store.dfpop::<i32>(&1).await.unwrap().as_ref().unwrap(),
-            &2,
+            *store.dfpop::<i32>(&1).await.unwrap().unwrap(),
+            2,
             "The fpopped item was not 2"
         );
         assert_eq!(
-            store.dfpop::<i32>(&1).await.unwrap().as_ref().unwrap(),
-            &1,
+            *store.dfpop::<i32>(&1).await.unwrap().unwrap(),
+            1,
             "The fpopped item was not 1"
         );
         assert!(
@@ -2208,8 +2222,8 @@ mod tests {
         store.dappend(1, 3, Duration::minutes(1), 3).await;
 
         assert_eq!(
-            store.dpop::<i32>(&1, 1).await.unwrap().as_ref().unwrap(),
-            &2,
+            *store.dpop::<i32>(&1, 1).await.unwrap().unwrap(),
+            2,
             "The dpopped item was not 2"
         );
         assert_eq!(
@@ -2233,8 +2247,8 @@ mod tests {
         store.dfrem(&1).await;
 
         assert_eq!(
-            store.dfpeek::<i32>(&1).await.unwrap().as_ref().unwrap(),
-            &2,
+            *store.dfpeek::<i32>(&1).await.unwrap().unwrap(),
+            2,
             "The fpeeked item was not 2"
         );
         assert_eq!(
@@ -2246,8 +2260,8 @@ mod tests {
         store.dfrem(&1).await;
 
         assert_eq!(
-            store.dfpeek::<i32>(&1).await.unwrap().as_ref().unwrap(),
-            &3,
+            *store.dfpeek::<i32>(&1).await.unwrap().unwrap(),
+            3,
             "The fpeeked item was not 2"
         );
         assert_eq!(
@@ -2278,8 +2292,8 @@ mod tests {
         store.dbrem(&1).await;
 
         assert_eq!(
-            store.dbpeek::<i32>(&1).await.unwrap().as_ref().unwrap(),
-            &2,
+            *store.dbpeek::<i32>(&1).await.unwrap().unwrap(),
+            2,
             "The bpeeked item was not 2"
         );
         assert_eq!(
@@ -2291,8 +2305,8 @@ mod tests {
         store.dbrem(&1).await;
 
         assert_eq!(
-            store.dbpeek::<i32>(&1).await.unwrap().as_ref().unwrap(),
-            &1,
+            *store.dbpeek::<i32>(&1).await.unwrap().unwrap(),
+            1,
             "The bpeeked item was not 1"
         );
         assert_eq!(
@@ -2323,7 +2337,7 @@ mod tests {
             .dall(&1)
             .await
             .into_iter()
-            .map(|i| i.value.unwrap())
+            .map(|i| *i.unwrap())
             .collect();
 
         assert_eq!(
@@ -2338,23 +2352,23 @@ mod tests {
             .dall(&1)
             .await
             .into_iter()
-            .map(|i| i.value.unwrap())
+            .map(|i| *i.unwrap())
             .collect();
 
         assert_eq!(nums, [1, 2, 5], "The deque's items are not 1, 2, and 5");
         assert_eq!(
-            store.dpeek::<i32>(&1, 0).await.unwrap().as_ref().unwrap(),
-            &1,
+            *store.dpeek::<i32>(&1, 0).await.unwrap().unwrap(),
+            1,
             "dpeek did not return 1"
         );
         assert_eq!(
-            store.dpeek::<i32>(&1, 1).await.unwrap().as_ref().unwrap(),
-            &2,
+            *store.dpeek::<i32>(&1, 1).await.unwrap().unwrap(),
+            2,
             "dpeek did not return 2"
         );
         assert_eq!(
-            store.dpeek::<i32>(&1, 2).await.unwrap().as_ref().unwrap(),
-            &5,
+            *store.dpeek::<i32>(&1, 2).await.unwrap().unwrap(),
+            5,
             "dpeek did not return 5"
         );
         assert!(
@@ -2364,7 +2378,7 @@ mod tests {
 
         store.dappend(1, 1, Duration::minutes(1), 1).await;
 
-        let item_ttl = store.dfpeek::<i32>(&1).await.unwrap().expires_at;
+        let item_ttl = store.dfpeek::<i32>(&1).await.unwrap().unwrap().expires_at;
 
         let now = Utc::now();
         assert!(
@@ -2374,7 +2388,7 @@ mod tests {
 
         store.dexpire(&1, 0, Duration::seconds(30)).await;
 
-        let item_ttl = store.dfpeek::<i32>(&1).await.unwrap().expires_at;
+        let item_ttl = store.dfpeek::<i32>(&1).await.unwrap().unwrap().expires_at;
 
         let now = Utc::now();
         assert!(
@@ -2409,7 +2423,7 @@ mod tests {
             .dall(&1)
             .await
             .into_iter()
-            .map(|i| i.value.unwrap())
+            .map(|i| *i.unwrap())
             .collect();
 
         assert_eq!(
@@ -2430,7 +2444,7 @@ mod tests {
             .dall(&1)
             .await
             .into_iter()
-            .map(|i| i.value.unwrap())
+            .map(|i| *i.unwrap())
             .collect();
 
         assert_eq!(
@@ -2475,7 +2489,7 @@ mod tests {
             .dall(&1)
             .await
             .into_iter()
-            .map(|i| i.value.unwrap())
+            .map(|i| *i.unwrap())
             .collect();
 
         assert_eq!(
@@ -2523,8 +2537,8 @@ mod tests {
                 });
 
                 assert_eq!(
-                    &(j * i + 5),
-                    value.as_ref().unwrap_or_else(|_| {
+                    j * i + 5,
+                    *value.unwrap_or_else(|_| {
                         panic!(
                             "Could not decode value in map {i} for key {} when getting",
                             j * i
@@ -2546,8 +2560,8 @@ mod tests {
                 });
 
                 assert_eq!(
-                    &(j * i + 5),
-                    value.as_ref().unwrap_or_else(|_| {
+                    j * i + 5,
+                    *value.unwrap_or_else(|_| {
                         panic!(
                             "Could not decode value in map {i} for key {} when popping",
                             j * i
@@ -2620,6 +2634,7 @@ mod tests {
                     .hget::<i32>(&i, &(i * j))
                     .await
                     .unwrap_or_else(|| panic!("Item {} in map {i} did not return a value", i * j))
+                    .unwrap()
                     .expires_at;
 
                 let now = Utc::now();
