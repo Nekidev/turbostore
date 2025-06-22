@@ -62,7 +62,7 @@
 //! # async {
 //! use turbostore::{TurboStore, Duration};
 //!
-//! let store: TurboStore<String> = TurboStore::with_capacity(2);
+//! let store: TurboStore<String> = TurboStore::with_capacity(3);
 //!
 //! store.set("key1".into(), &"value1".to_string(), Duration::minutes(1)).await;
 //! store.set("key2".into(), &"value2".to_string(), Duration::minutes(1)).await;
